@@ -456,24 +456,29 @@ Tailwind.register("overflow-scroll", function(i) if i:IsA("ScrollingFrame") then
 
 -- shadows (ImageLabel behind)
 local function addShadow(i, size, trans)
-	local s = Instance.new("ImageLabel")
+	local s = i:FindFirstChild("_tw_shadow") or Instance.new("ImageLabel")
 	s.Name = "_tw_shadow"
 	s.BackgroundTransparency = 1
 	s.Image = "rbxassetid://1316045217"
 	s.ImageColor3 = Color3.new(0,0,0)
 	s.ImageTransparency = trans
 	s.ScaleType = Enum.ScaleType.Slice
-	s.SliceCenter = Rect.new(10,10,118,118)
-	s.Size = UDim2.new(1, size, 1, size)
+	s.SliceCenter = Rect.new(10, 10, 118, 118)
+	s.Size = i.Size + UDim2.new(0, size, 0, size)
 	s.Position = UDim2.new(0, -size/2, 0, -size/2)
 	s.ZIndex = i.ZIndex - 1
 	s.Parent = i
 end
-Tailwind.register("shadow-sm", function(i) addShadow(i, 4, 0.85) end)
-Tailwind.register("shadow-md", function(i) addShadow(i, 8, 0.8) end)
-Tailwind.register("shadow-lg", function(i) addShadow(i, 12, 0.78) end)
-Tailwind.register("shadow-xl", function(i) addShadow(i, 16, 0.75) end)
-Tailwind.register("shadow-2xl", function(i) addShadow(i, 20, 0.72) end)
+
+Tailwind.register("shadow-sm", function(i) addShadow(i, 4, 0.75) end)
+Tailwind.register("shadow", function(i) addShadow(i, 8, 0.7) end)
+Tailwind.register("shadow-md", function(i) addShadow(i, 12, 0.65) end)
+Tailwind.register("shadow-lg", function(i) addShadow(i, 16, 0.6) end)
+Tailwind.register("shadow-xl", function(i) addShadow(i, 24, 0.55) end)
+Tailwind.register("shadow-2xl", function(i) addShadow(i, 32, 0.5) end)
+
+-- 🔥 VERY LAST LINE
+return Tailwind
 
 -- transforms
 local function ensureScale(i)
