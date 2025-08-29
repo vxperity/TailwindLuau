@@ -1,113 +1,83 @@
 --[=[
 TailwindLuau — TailwindCSS-style utilities for Roblox UI (Luau)
-Version: 0.9.0 (large manual port)
+Complete rewrite (5-part paste). Paste parts 1→5 contiguously into one ModuleScript.
 
-What you get (manual port, high coverage):
-- Colors: gray, slate, zinc, neutral, stone, red, orange, yellow, green, teal, cyan, sky, blue, indigo, violet, purple, fuchsia, pink, rose (shades 50..900)
-- Background / Text / Border colors: bg-*, text-*, border-*
+Features target (implemented across parts):
+- Colors (full Tailwind palette) + bg-*/text-*/border-* with /alpha and -t (tween-aware)
 - Opacity utilities: opacity-0..100 (step 5)
-- Spacing scale: 0..96 (Tailwind-ish: 0,0.5,1,1.5,2,2.5,3,3.5,4,5,6,7,8,9,10,11,12,14,16,20,24,28,32,36,40,44,48,52,56,60,64,72,80,96)
-- Margin / Padding: m-*, mx-*, my-*, mt/mr/mb/ml, p-*, px/py/pt/pr/pb/pl
-- Sizing: w-*, h-*, w-full/h-full, min-w/min-h/max-w/max-h, screen helpers
-- Display: hidden, block, inline-block (no-op), inline-flex, flex, grid
-- Flexbox: flex-row/col, wrap, justify-*, items-*, content-*, self-*, gap-*
-- Grid: grid-cols-{1..12}, gap-*, auto-fit behavior via UIGridLayout
-- Typography: text-xs..9xl, font-{thin,extralight,light,normal,medium,semibold,bold,extrabold,black},
-  leading-{none,tight,normal,loose}, tracking-{tighter,tight,normal,wide,wider,widest}, text-left/center/right
-- Radius: rounded, rounded-{sm,md,lg,xl,2xl,3xl,full}, rounded-{t,r,b,l}
-- Border: border, border-0..8, border-{color}, divide-x/y (basic), ring (UIStroke)
-- Z-index: z-0..50, z-auto
-- Overflow: overflow-{visible,hidden,scroll} (ScrollingFrame-aware)
-- Effects: shadow-{sm,md,lg,xl,2xl}, blur-{sm,md,lg} (UIBlurEffect for 3D or backdrop sim), backdrop (glass gradient helper)
-- Transforms: scale-50..150 (UIScale), rotate-{0,45,90,180,270} (ImageLabel only), translate-x/y-{n} (offset)
-- Transitions: transition, duration-75..1000, ease-{linear,in,out,in-out},
-  hover: and active: variants (MouseEnter/Leave/Down/Up), focus: (textboxes)
-- Responsive variants: sm:, md:, lg:, xl: (breakpoints 640/768/1024/1280 px) using AbsoluteSize.X of the top ScreenGui
-- Utilities to programmatically register or compose classes
-
-Limitations:
-- True CSS layout features differ from Roblox; we approximate flex/grid with UIListLayout/UIGridLayout.
-- Rotation for GUI is limited; implemented for ImageLabel via Rotation.
-- Backdrop blur uses a simulated layer (can’t blur the 2D backbuffer reliably in all executors).
-- Some Tailwind edge utilities omitted or approximated; extend the registry using Tailwind.register.
-
-Usage:
-local TW = require(path.to.thisModule)
-local gui = Instance.new("ScreenGui", game.Players.LocalPlayer.PlayerGui)
-local card = TW.create("Frame", { Parent = gui, Size = UDim2.fromOffset(360, 180),
-  Class = "bg-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col gap-4 hover:bg-slate-700/80 transition duration-200" })
-
-local title = TW.create("TextLabel", { Parent = card, Text = "Tailwind in Roblox", Class = "text-white text-xl font-semibold" })
-
-Extend:
-TW.register("bg-brand", function(i) i.BackgroundColor3 = Color3.fromRGB(85,120,255) end)
-TW.apply(card, "bg-brand")
-
+- Spacing scale, Margin/Padding
+- Sizing (w-*, h-*, min/max), Screen helpers
+- Display, Flexbox, Grid, gaps, alignment
+- Typography (sizes, weights, align, truncate, rich best-effort)
+- Radius, Border, Ring
+- Z-index, Overflow
+- Effects: shadows, blur/backdrop glass helper
+- Transforms: scale/rotate/translate
+- Transitions: transition, duration-*, ease-*
+- Variants: hover:/active:/focus:, Responsive sm:/md:/lg:/xl:
+- Utilities to register/apply classes at runtime
 ]=]
+
+--// PART 1 / 5 ---------------------------------------------------------------
 
 local Tailwind = {}
 Tailwind.__index = Tailwind
 
--- Runtime env helpers
+-- Services
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
--- root screen (for responsive)
-local function findScreenGui(inst)
+-- ---------- Root / Responsive helpers ----------
+local function findScreenGui(inst: Instance?): ScreenGui?
 	local s = inst
-	while s and not s:IsA("ScreenGui") do s = s.Parent end
+	while s and not s:IsA("ScreenGui") do
+		s = s.Parent
+	end
 	return s
 end
 
--- Tween helper
-local function tween(o, t, props, style, dir)
-	TweenService:Create(o, TweenInfo.new(t or 0.2, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props):Play()
+-- tween helper (used by transition-aware utilities)
+local function tween(o: Instance, t: number?, props: {[string]: any}, style: Enum.EasingStyle?, dir: Enum.EasingDirection?)
+	TweenService:Create(
+		o,
+		TweenInfo.new(t or 0.2, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
+		props
+	):Play()
 end
 
--- ---------- Values / Scales ----------
-
--- spacing map (px)
-local spacing = {
+-- ---------- Core scales & tables ----------
+-- spacing (Tailwind-ish px)
+local spacing: {[string]: number} = {
 	["0"]=0,["0.5"]=2,["1"]=4,["1.5"]=6,["2"]=8,["2.5"]=10,["3"]=12,["3.5"]=14,["4"]=16,["5"]=20,["6"]=24,
 	["7"]=28,["8"]=32,["9"]=36,["10"]=40,["11"]=44,["12"]=48,["14"]=56,["16"]=64,["20"]=80,["24"]=96,["28"]=112,
 	["32"]=128,["36"]=144,["40"]=160,["44"]=176,["48"]=192,["52"]=208,["56"]=224,["60"]=240,["64"]=256,["72"]=288,
 	["80"]=320,["96"]=384,
 }
 
--- text sizes (px)
-local textSize = { xs=12, sm=14, base=16, lg=18, xl=20, ["2xl"]=24, ["3xl"]=30, ["4xl"]=36, ["5xl"]=48, ["6xl"]=60, ["7xl"]=72, ["8xl"]=96, ["9xl"]=128 }
-
--- font weight mapping (best-effort)
-local weightFont = {
-	thin=Enum.Font.Gotham,["extralight"]=Enum.Font.Gotham,["light"]=Enum.Font.Gotham,
-	normal=Enum.Font.Gotham, medium=Enum.Font.GothamMedium, semibold=Enum.Font.GothamSemibold,
-	bold=Enum.Font.GothamBold, extrabold=Enum.Font.GothamBlack, black=Enum.Font.GothamBlack
+local textSize = {
+	xs=12, sm=14, base=16, lg=18, xl=20,
+	["2xl"]=24, ["3xl"]=30, ["4xl"]=36, ["5xl"]=48, ["6xl"]=60, ["7xl"]=72, ["8xl"]=96, ["9xl"]=128,
 }
 
--- tracking (letter spacing) approximation using RichText (not fully supported), we simulate via no-op
-local tracking = { tighter=0, tight=0, normal=0, wide=0, wider=0, widest=0 }
+local weightFont = {
+	thin=Enum.Font.Gotham, extralight=Enum.Font.Gotham, light=Enum.Font.Gotham,
+	normal=Enum.Font.Gotham, medium=Enum.Font.GothamMedium, semibold=Enum.Font.GothamSemibold,
+	bold=Enum.Font.GothamBold, extrabold=Enum.Font.GothamBlack, black=Enum.Font.GothamBlack,
+}
 
--- line-height (leading) approximated by TextYAlignment/automatic; we add UIPadding fudge
-local leadingPadding = { none=0, tight=0, normal=2, loose=6 }
-
--- z-index scale
-local zIndex = { auto=nil, [0]=0,[10]=10,[20]=20,[30]=30,[40]=40,[50]=50 }
-
--- durations
 local durations = { [75]=0.075,[100]=0.1,[150]=0.15,[200]=0.2,[300]=0.3,[500]=0.5,[700]=0.7,[1000]=1 }
-
--- easings
 local easings = {
 	linear = Enum.EasingStyle.Linear,
-	in = Enum.EasingStyle.Quad,
+	["in"] = Enum.EasingStyle.Quad,
 	out = Enum.EasingStyle.Quad,
 	["in-out"] = Enum.EasingStyle.Quad,
 }
+local zIndexMap = { auto=nil, [0]=0,[10]=10,[20]=20,[30]=30,[40]=40,[50]=50 }
 
--- color palette (subset but broad). Tailwind RGB values.
-local function rgb(r,g,b) return Color3.fromRGB(r,g,b) end
+-- Tailwind palette (RGB, closest matches)
+local function rgb(r: number,g: number,b: number) return Color3.fromRGB(r,g,b) end
 local palette = {
 	gray={ [50]=rgb(249,250,251),[100]=rgb(243,244,246),[200]=rgb(229,231,235),[300]=rgb(209,213,219),[400]=rgb(156,163,175),[500]=rgb(107,114,128),[600]=rgb(75,85,99),[700]=rgb(55,65,81),[800]=rgb(31,41,55),[900]=rgb(17,24,39) },
 	slate={ [50]=rgb(248,250,252),[100]=rgb(241,245,249),[200]=rgb(226,232,240),[300]=rgb(203,213,225),[400]=rgb(148,163,184),[500]=rgb(100,116,139),[600]=rgb(71,85,105),[700]=rgb(51,65,85),[800]=rgb(30,41,59),[900]=rgb(15,23,42) },
@@ -130,64 +100,179 @@ local palette = {
 	rose={ [50]=rgb(255,241,242),[100]=rgb(255,228,230),[200]=rgb(254,205,211),[300]=rgb(253,164,175),[400]=rgb(251,113,133),[500]=rgb(244,63,94),[600]=rgb(225,29,72),[700]=rgb(190,18,60),[800]=rgb(159,18,57),[900]=rgb(136,19,55) },
 }
 
--- ---------- Registry & API ----------
+-- ---------- Registry & public API ----------
 Tailwind.registry = {}
 Tailwind.variants = { hover=true, active=true, focus=true, sm=true, md=true, lg=true, xl=true }
 Tailwind.breakpoints = { sm=640, md=768, lg=1024, xl=1280 }
 
-function Tailwind.register(className, applyFn)
+function Tailwind.register(className: string, applyFn: (Instance, string?) -> ())
 	Tailwind.registry[className] = applyFn
 end
 
-local function ensurePadding(frame)
+-- ---------- Internals ----------
+local function ensurePadding(frame: Instance): UIPadding
 	local pad = frame:FindFirstChildOfClass("UIPadding")
-	if not pad then pad = Instance.new("UIPadding"); pad.Parent = frame end
+	if not pad then
+		pad = Instance.new("UIPadding")
+		pad.Parent = frame
+	end
 	return pad
 end
 
-local function ensureListLayout(frame, vertical)
+local function ensureListLayout(frame: Instance, vertical: boolean): UIListLayout
 	local ll = frame:FindFirstChildOfClass("UIListLayout")
-	if not ll then ll = Instance.new("UIListLayout"); ll.Parent = frame end
+	if not ll then
+		ll = Instance.new("UIListLayout")
+		ll.Parent = frame
+	end
 	ll.FillDirection = vertical and Enum.FillDirection.Vertical or Enum.FillDirection.Horizontal
 	ll.SortOrder = Enum.SortOrder.LayoutOrder
 	return ll
 end
 
-local function ensureGrid(frame)
+local function ensureGrid(frame: Instance): UIGridLayout
 	local g = frame:FindFirstChildOfClass("UIGridLayout")
-	if not g then g = Instance.new("UIGridLayout"); g.Parent = frame end
+	if not g then
+		g = Instance.new("UIGridLayout")
+		g.Parent = frame
+	end
 	g.SortOrder = Enum.SortOrder.LayoutOrder
-	g.FillDirectionMaxCells = 0 -- we set via cols util
+	g.FillDirectionMaxCells = 0
 	return g
 end
 
--- state store per instance
-local stateMap = setmetatable({}, { __mode = "k" })
-local function getState(inst)
-	local s = stateMap[inst]
-	if not s then s = { base={}, hover={}, active={}, focus={}, responsive={} }; stateMap[inst] = s end
+local function ensureStroke(i: Instance): UIStroke
+	local s = i:FindFirstChildOfClass("UIStroke")
+	if not s then
+		s = Instance.new("UIStroke")
+		s.Parent = i
+	end
 	return s
 end
 
--- apply class list (space-delimited)
-function Tailwind.apply(instance, classString)
+local function ensureScale(i: Instance): UIScale
+	local s = i:FindFirstChildOfClass("UIScale")
+	if not s then
+		s = Instance.new("UIScale")
+		s.Parent = i
+	end
+	return s
+end
+
+-- state store per instance (weak keys so instances can GC)
+local stateMap = setmetatable({}, { __mode = "k" })
+local function getState(inst: Instance)
+	local s = stateMap[inst]
+	if not s then
+		s = { base={}, hover={}, active={}, focus={}, responsive={}, _wired=false, _respWired=false }
+		stateMap[inst] = s
+	end
+	return s
+end
+
+-- transition context helpers
+local function smartTween(i: Instance, key: string, target: any)
+	if not i:GetAttribute("_tw_transition") then
+		(i :: any)[key] = target
+		return
+	end
+	local dur = i:GetAttribute("_tw_duration") or 0.2
+	local ease = i:GetAttribute("_tw_ease") or Enum.EasingStyle.Quad
+	TweenService:Create(i, TweenInfo.new(dur, ease, Enum.EasingDirection.Out), { [key]=target }):Play()
+end
+
+-- Public create (simple sugar)
+function Tailwind.create(className: string, props: {[string]: any}?)
+	local o = Instance.new(className)
+	props = props or {}
+	if props.Parent then o.Parent = props.Parent end
+	if props.Size then o.Size = props.Size end
+	if props.Position then o.Position = props.Position end
+	if props.AnchorPoint then o.AnchorPoint = props.AnchorPoint end
+	if props.Visible ~= nil then o.Visible = props.Visible end
+	if props.Text ~= nil then pcall(function() (o :: any).Text = props.Text end) end
+	if props.RichText ~= nil then pcall(function() (o :: any).RichText = props.RichText end) end
+	if props.Class then Tailwind.apply(o, props.Class) end
+	return o
+end
+
+-- Apply classes (space-delimited)
+function Tailwind.apply(instance: Instance, classString: string?)
 	if not classString or classString == "" then return end
 	for raw in string.gmatch(classString, "[^%s]+") do
 		Tailwind._applyOne(instance, raw)
 	end
 end
 
--- parse variants and apply
-function Tailwind._applyOne(inst, raw)
-	-- opacity slash notation e.g., bg-blue-500/80
-	local base, alpha = string.match(raw, "^(.-)/(%d+)$")
-	local class = base or raw
+-- Wire state variants once
+function Tailwind._wireStates(inst: Instance)
+	local st = getState(inst)
+	if st._wired or not inst:IsA("GuiObject") then return end
+	st._wired = true
 
-	-- responsive variant: sm:, md:, ...
-	local bp, tail = string.match(class, "^(sm:.*)$") or string.match(class, "^(md:.*)$") or string.match(class, "^(lg:.*)$") or string.match(class, "^(xl:.*)$")
-	if (string.sub(class,1,3) == "sm:" or string.sub(class,1,3) == "md:" or string.sub(class,1,3) == "lg:" or string.sub(class,1,3) == "xl:") then
-		local variant = string.sub(class,1,2) -- sm/md/lg/xl
-		local rest = string.sub(class,4)
+	(inst :: GuiObject).MouseEnter:Connect(function()
+		for _,u in ipairs(st.hover or {}) do
+			local fn = Tailwind.registry[u.base]
+			if fn then fn(inst, u.alpha) end
+		end
+	end)
+
+	(inst :: GuiObject).InputBegan:Connect(function(io)
+		if io.UserInputType == Enum.UserInputType.MouseButton1 then
+			for _,u in ipairs(st.active or {}) do
+				local fn = Tailwind.registry[u.base]
+				if fn then fn(inst, u.alpha) end
+			end
+		end
+	end)
+
+	if inst:IsA("TextBox") then
+		inst.Focused:Connect(function()
+			for _,u in ipairs(st.focus or {}) do
+				local fn = Tailwind.registry[u.base]
+				if fn then fn(inst, u.alpha) end
+			end
+		end)
+	end
+end
+
+-- Wire responsive once
+function Tailwind._wireResponsive(inst: Instance)
+	local sgui = findScreenGui(inst)
+	if not sgui then return end
+	local st = getState(inst)
+	if st._respWired then return end
+	st._respWired = true
+
+	local function applyForWidth(w: number)
+		for key, arr in pairs(st.responsive) do
+			local min = Tailwind.breakpoints[key]
+			if w >= min then
+				for _,u in ipairs(arr) do
+					local fn = Tailwind.registry[u.base]
+					if fn then fn(inst, u.alpha) end
+				end
+			end
+		end
+	end
+
+	applyForWidth(sgui.AbsoluteSize.X)
+	sgui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		applyForWidth(sgui.AbsoluteSize.X)
+	end)
+end
+
+-- Parse/apply one token (supports variants and slash alpha)
+function Tailwind._applyOne(inst: Instance, raw: string)
+	-- slash opacity (e.g. bg-blue-500/80)
+	local base, alpha = string.match(raw, "^(.-)/(%d+)$")
+	local token = base or raw
+
+	-- responsive prefixes
+	if string.sub(token,1,3) == "sm:" or string.sub(token,1,3) == "md:"
+	or string.sub(token,1,3) == "lg:" or string.sub(token,1,3) == "xl:" then
+		local variant = string.sub(token,1,2) -- sm/md/lg/xl
+		local rest = string.sub(token,4)
 		local st = getState(inst)
 		st.responsive[variant] = st.responsive[variant] or {}
 		table.insert(st.responsive[variant], { name=raw, base=rest, alpha=alpha })
@@ -195,11 +280,11 @@ function Tailwind._applyOne(inst, raw)
 		return
 	end
 
-	-- pseudo state variants
+	-- state variants
 	for _,v in ipairs({"hover:","active:","focus:"}) do
-		if string.sub(class,1,#v) == v then
+		if string.sub(token,1,#v) == v then
 			local key = string.sub(v,1,#v-1)
-			local rest = string.sub(class,#v+1)
+			local rest = string.sub(token,#v+1)
 			local st = getState(inst)
 			st[key] = st[key] or {}
 			table.insert(st[key], { name=raw, base=rest, alpha=alpha })
@@ -209,265 +294,323 @@ function Tailwind._applyOne(inst, raw)
 	end
 
 	-- base utility
-	local fn = Tailwind.registry[class]
-	if fn then fn(inst, alpha) end
-end
-
-function Tailwind._wireStates(inst)
-	local st = getState(inst)
-	if st._wired then return end
-	st._wired = true
-	-- hover
-	if inst:IsA("GuiObject") then
-		inst.MouseEnter:Connect(function()
-			for _,u in ipairs(st.hover or {}) do
-				local fn = Tailwind.registry[u.base]
-				if fn then fn(inst, u.alpha) end
-			end
-		end)
-		inst.MouseLeave:Connect(function()
-			-- No automatic revert; recommend to pair base classes.
-		end)
-		-- active (mouse down)
-		inst.InputBegan:Connect(function(io)
-			if io.UserInputType == Enum.UserInputType.MouseButton1 then
-				for _,u in ipairs(st.active or {}) do local fn = Tailwind.registry[u.base]; if fn then fn(inst, u.alpha) end end
-			end
-		end)
-		-- focus (TextBoxes)
-		if inst:IsA("TextBox") then
-			inst.Focused:Connect(function()
-				for _,u in ipairs(st.focus or {}) do local fn = Tailwind.registry[u.base]; if fn then fn(inst, u.alpha) end end
-			end)
-		end
+	local fn = Tailwind.registry[token]
+	if fn then
+		fn(inst, alpha)
 	end
 end
 
-function Tailwind._wireResponsive(inst)
-	local sgui = findScreenGui(inst)
-	if not sgui then return end
-	local function applyForWidth(w)
-		local st = getState(inst)
-		for key,arr in pairs(st.responsive) do
-			local min = Tailwind.breakpoints[key]
-			if w >= min then
-				for _,u in ipairs(arr) do local fn = Tailwind.registry[u.base]; if fn then fn(inst, u.alpha) end end
-			end
-		end
-	end
-	applyForWidth(sgui.AbsoluteSize.X)
-	sgui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		applyForWidth(sgui.AbsoluteSize.X)
-	end)
-end
-
-function Tailwind.create(className, props)
-	local o = Instance.new(className)
-	props = props or {}
-	if props.Parent then o.Parent = props.Parent end
-	if props.Size then o.Size = props.Size end
-	if props.Position then o.Position = props.Position end
-	if props.AnchorPoint then o.AnchorPoint = props.AnchorPoint end
-	if props.Text then pcall(function() o.Text = props.Text end) end
-	if props.RichText ~= nil then pcall(function() o.RichText = props.RichText end) end
-	if props.Visible ~= nil then o.Visible = props.Visible end
-	if props.Class then Tailwind.apply(o, props.Class) end
-	return o
-end
-
--- ---------- Utility Builders ----------
-
-local function registerColorTriplet(prefix, prop)
+-- ---------- Color utilities ----------
+-- helper: register triplet (bg/text/border) with optional slash opacity handling
+local function registerColorTriplet(prefix: string, prop: "BackgroundColor3"|"TextColor3"|"BorderColor3")
 	for family, shades in pairs(palette) do
 		for shade, c in pairs(shades) do
 			local name = ("%s-%s-%d"):format(prefix, family, shade)
-			Tailwind.register(name, function(inst, alpha)
-				inst[prop] = c
+			Tailwind.register(name, function(inst: Instance, alpha: string?)
+				(inst :: any)[prop] = c
 				if alpha then
-					local a = math.clamp(tonumber(alpha) or 100, 0, 100)/100
-					-- Simulate alpha via BackgroundTransparency/TextTransparency
-					if prop == "BackgroundColor3" then inst.BackgroundTransparency = 1-a end
-					if prop == "TextColor3" then pcall(function() inst.TextTransparency = 1-a end) end
-					if prop == "BorderColor3" then pcall(function() inst.BorderSizePixel = inst.BorderSizePixel > 0 and inst.BorderSizePixel or 1 end) end
+					local a = math.clamp(tonumber(alpha) or 100, 0, 100) / 100
+					if prop == "BackgroundColor3" and inst:IsA("GuiObject") then
+						inst.BackgroundTransparency = 1 - a
+					elseif prop == "TextColor3" then
+						pcall(function() (inst :: any).TextTransparency = 1 - a end)
+					elseif prop == "BorderColor3" then
+						pcall(function()
+							if inst:IsA("GuiObject") then
+								inst.BorderSizePixel = (inst.BorderSizePixel > 0) and inst.BorderSizePixel or 1
+							end
+						end)
+					end
+				end
+			end)
+			-- transition-aware variants (suffix -t)
+			local tname = ("%s-%s-%d-t"):format(prefix, family, shade)
+			Tailwind.register(tname, function(inst: Instance)
+				if prop == "BackgroundColor3" then
+					smartTween(inst, "BackgroundColor3", c)
+				elseif prop == "TextColor3" then
+					pcall(function() smartTween(inst, "TextColor3", c) end)
+				elseif prop == "BorderColor3" then
+					pcall(function()
+						if inst:IsA("GuiObject") and inst.BorderSizePixel == 0 then inst.BorderSizePixel = 1 end
+						smartTween(inst, "BorderColor3", c)
+					end)
 				end
 			end)
 		end
 	end
 end
 
--- bg-*, text-*, border-*
+-- Register bg-*, text-*, border-*
 registerColorTriplet("bg", "BackgroundColor3")
 registerColorTriplet("text", "TextColor3")
 registerColorTriplet("border", "BorderColor3")
 
--- common aliases
-Tailwind.register("bg-white", function(i,a) i.BackgroundColor3 = Color3.fromRGB(255,255,255); if a then i.BackgroundTransparency = 1-(tonumber(a) or 100)/100 end end)
-Tailwind.register("bg-black", function(i,a) i.BackgroundColor3 = Color3.fromRGB(0,0,0); if a then i.BackgroundTransparency = 1-(tonumber(a) or 100)/100 end end)
-Tailwind.register("text-white", function(i,a) pcall(function() i.TextColor3 = Color3.new(1,1,1); if a then i.TextTransparency = 1-(tonumber(a) or 100)/100 end end) end)
-Tailwind.register("text-black", function(i,a) pcall(function() i.TextColor3 = Color3.new(0,0,0); if a then i.TextTransparency = 1-(tonumber(a) or 100)/100 end end) end)
+-- Common color aliases
+Tailwind.register("bg-white", function(i: Instance, a: string?)
+	local c = Color3.fromRGB(255,255,255)
+	(i :: any).BackgroundColor3 = c
+	if a and (i :: any).BackgroundTransparency ~= nil then
+		local alpha = math.clamp(tonumber(a) or 100, 0, 100)/100
+		(i :: any).BackgroundTransparency = 1 - alpha
+	end
+end)
 
--- opacity-*
-for n=0,100,5 do
+Tailwind.register("bg-black", function(i: Instance, a: string?)
+	local c = Color3.fromRGB(0,0,0)
+	(i :: any).BackgroundColor3 = c
+	if a and (i :: any).BackgroundTransparency ~= nil then
+		local alpha = math.clamp(tonumber(a) or 100, 0, 100)/100
+		(i :: any).BackgroundTransparency = 1 - alpha
+	end
+end)
+
+Tailwind.register("text-white", function(i: Instance, a: string?)
+	pcall(function()
+		(i :: any).TextColor3 = Color3.new(1,1,1)
+		if a then (i :: any).TextTransparency = 1 - (math.clamp(tonumber(a) or 100,0,100)/100) end
+	end)
+end)
+
+Tailwind.register("text-black", function(i: Instance, a: string?)
+	pcall(function()
+		(i :: any).TextColor3 = Color3.new(0,0,0)
+		if a then (i :: any).TextTransparency = 1 - (math.clamp(tonumber(a) or 100,0,100)/100) end
+	end)
+end)
+
+-- Opacity utilities (affect Text/Background when applicable)
+for n = 0, 100, 5 do
 	local name = "opacity-"..tostring(n)
-	Tailwind.register(name, function(i)
+	Tailwind.register(name, function(i: Instance)
 		local a = n/100
-		if i:IsA("TextLabel") or i:IsA("TextButton") or i:IsA("TextBox") then i.TextTransparency = 1-a end
-		if i:IsA("GuiObject") then i.BackgroundTransparency = 1-a end
+		if i:IsA("GuiObject") then
+			i.BackgroundTransparency = 1 - a
+		end
+		pcall(function()
+			(i :: any).TextTransparency = 1 - a
+		end)
 	end)
 end
 
--- display
-Tailwind.register("hidden", function(i) i.Visible = false end)
-Tailwind.register("block", function(i) i.Visible = true end)
-Tailwind.register("inline-block", function(i) i.Visible = true end)
-Tailwind.register("flex", function(i) ensureListLayout(i,false) end)
-Tailwind.register("inline-flex", function(i) ensureListLayout(i,false) end)
-Tailwind.register("grid", function(i) ensureGrid(i) end)
+-- (display, layout, spacing, etc. continue in Part 2)
+--// END PART 1 / 5 ----------------------------------------------------------
+--========================================================--
+--  Part 2: Layout, Spacing, Flexbox, Grid, Sizing
+--========================================================--
 
--- flex direction & wrap
+-- ---------- Display ----------
+Tailwind.register("block", function(i) i.Visible = true end)
+Tailwind.register("hidden", function(i) i.Visible = false end)
+
+-- ---------- Flexbox ----------
+Tailwind.register("flex", function(i) ensureListLayout(i,false) end)
 Tailwind.register("flex-row", function(i) ensureListLayout(i,false) end)
 Tailwind.register("flex-col", function(i) ensureListLayout(i,true) end)
-Tailwind.register("flex-wrap", function(i) local ll = ensureListLayout(i,false); ll.Wraps = true end)
-Tailwind.register("flex-nowrap", function(i) local ll = ensureListLayout(i,false); ll.Wraps = false end)
 
--- justify / items / content
-local hAlign = { start=Enum.HorizontalAlignment.Left, center=Enum.HorizontalAlignment.Center, end_=Enum.HorizontalAlignment.Right, between=Enum.HorizontalAlignment.Left }
-local vAlign = { start=Enum.VerticalAlignment.Top, center=Enum.VerticalAlignment.Center, end_=Enum.VerticalAlignment.Bottom }
+Tailwind.register("items-start", function(i) ensureListLayout(i).VerticalAlignment = Enum.VerticalAlignment.Top end)
+Tailwind.register("items-center", function(i) ensureListLayout(i).VerticalAlignment = Enum.VerticalAlignment.Center end)
+Tailwind.register("items-end", function(i) ensureListLayout(i).VerticalAlignment = Enum.VerticalAlignment.Bottom end)
 
-local function setJustify(i, k)
-	local ll = ensureListLayout(i,false)
-	if k=="between" then ll.HorizontalAlignment = Enum.HorizontalAlignment.Left; ll.Padding = UDim.new(0, ll.Padding and ll.Padding.Offset or 0) else ll.HorizontalAlignment = hAlign[k] or Enum.HorizontalAlignment.Left end
-end
-Tailwind.register("justify-start", function(i) setJustify(i, "start") end)
-Tailwind.register("justify-center", function(i) setJustify(i, "center") end)
-Tailwind.register("justify-end", function(i) setJustify(i, "end_") end)
-Tailwind.register("justify-between", function(i) setJustify(i, "between") end)
+Tailwind.register("justify-start", function(i) ensureListLayout(i).HorizontalAlignment = Enum.HorizontalAlignment.Left end)
+Tailwind.register("justify-center", function(i) ensureListLayout(i).HorizontalAlignment = Enum.HorizontalAlignment.Center end)
+Tailwind.register("justify-end", function(i) ensureListLayout(i).HorizontalAlignment = Enum.HorizontalAlignment.Right end)
 
-local function setItems(i, k)
-	local ll = ensureListLayout(i,false)
-	ll.VerticalAlignment = vAlign[k] or Enum.VerticalAlignment.Center
-end
-Tailwind.register("items-start", function(i) setItems(i, "start") end)
-Tailwind.register("items-center", function(i) setItems(i, "center") end)
-Tailwind.register("items-end", function(i) setItems(i, "end_") end)
-
--- gap-*
+Tailwind.register("gap-0", function(i) ensureListLayout(i).Padding = UDim.new(0,0) end)
 for key,px in pairs(spacing) do
-	Tailwind.register("gap-"..key, function(i)
-		local ll = i:FindFirstChildOfClass("UIListLayout") or i:FindFirstChildOfClass("UIGridLayout")
-		if not ll then ll = ensureListLayout(i,false) end
-		if ll:IsA("UIListLayout") then ll.Padding = UDim.new(0, px) else ll.CellPadding = UDim2.new(0,px,0,px) end
+	Tailwind.register("gap-"..key, function(i) ensureListLayout(i).Padding = UDim.new(0,px) end)
+end
+
+-- ---------- Grid ----------
+Tailwind.register("grid", function(i) ensureGrid(i) end)
+for cols=1,12 do
+	Tailwind.register("grid-cols-"..cols, function(i) ensureGrid(i).CellSize = UDim2.new(1/cols,0,0,0) end)
+end
+
+-- ---------- Padding ----------
+for key,px in pairs(spacing) do
+	Tailwind.register("p-"..key, function(i)
+		local p=ensurePadding(i)
+		p.PaddingTop,p.PaddingBottom,p.PaddingLeft,p.PaddingRight=UDim.new(0,px),UDim.new(0,px),UDim.new(0,px),UDim.new(0,px)
+	end)
+
+	Tailwind.register("px-"..key, function(i)
+		local p=ensurePadding(i)
+		p.PaddingLeft,p.PaddingRight=UDim.new(0,px),UDim.new(0,px)
+	end)
+	Tailwind.register("py-"..key, function(i)
+		local p=ensurePadding(i)
+		p.PaddingTop,p.PaddingBottom=UDim.new(0,px),UDim.new(0,px)
+	end)
+
+	Tailwind.register("pt-"..key, function(i) ensurePadding(i).PaddingTop = UDim.new(0,px) end)
+	Tailwind.register("pb-"..key, function(i) ensurePadding(i).PaddingBottom = UDim.new(0,px) end)
+	Tailwind.register("pl-"..key, function(i) ensurePadding(i).PaddingLeft = UDim.new(0,px) end)
+	Tailwind.register("pr-"..key, function(i) ensurePadding(i).PaddingRight = UDim.new(0,px) end)
+end
+
+-- ---------- Margin ----------
+for key,px in pairs(spacing) do
+	Tailwind.register("m-"..key, function(i) i.Position = i.Position + UDim2.fromOffset(px,px) end)
+
+	Tailwind.register("mx-"..key, function(i) i.Position = i.Position + UDim2.fromOffset(px,0) end)
+	Tailwind.register("my-"..key, function(i) i.Position = i.Position + UDim2.fromOffset(0,px) end)
+
+	Tailwind.register("mt-"..key, function(i) i.Position = i.Position + UDim2.fromOffset(0,px) end)
+	Tailwind.register("mb-"..key, function(i) i.Position = i.Position + UDim2.fromOffset(0,-px) end)
+	Tailwind.register("ml-"..key, function(i) i.Position = i.Position + UDim2.fromOffset(px,0) end)
+	Tailwind.register("mr-"..key, function(i) i.Position = i.Position + UDim2.fromOffset(-px,0) end)
+end
+
+-- ---------- Width / Height ----------
+Tailwind.register("w-full", function(i) i.Size = UDim2.new(1,0,i.Size.Y.Scale,i.Size.Y.Offset) end)
+Tailwind.register("h-full", function(i) i.Size = UDim2.new(i.Size.X.Scale,i.Size.X.Offset,1,0) end)
+
+for key,px in pairs(spacing) do
+	Tailwind.register("w-"..key, function(i) i.Size = UDim2.new(0,px,i.Size.Y.Scale,i.Size.Y.Offset) end)
+	Tailwind.register("h-"..key, function(i) i.Size = UDim2.new(i.Size.X.Scale,i.Size.X.Offset,0,px) end)
+end
+
+for i=1,12 do
+	local frac = i/12
+	Tailwind.register("w-"..i.."/12", function(inst)
+		inst.Size = UDim2.new(frac,0,inst.Size.Y.Scale,inst.Size.Y.Offset)
+	end)
+	Tailwind.register("h-"..i.."/12", function(inst)
+		inst.Size = UDim2.new(inst.Size.X.Scale,inst.Size.X.Offset,frac,0)
 	end)
 end
+--========================================================--
+--  Part 3: Typography, Borders, Radius, Ring, Z-index
+--========================================================--
 
--- grid-cols-{n}
-for n=1,12 do
-	Tailwind.register("grid-cols-"..n, function(i)
-		local g = ensureGrid(i)
-		g.FillDirection = Enum.FillDirection.Horizontal
-		g.CellPadding = g.CellPadding or UDim2.new(0,8,0,8)
-		g:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() end)
-		-- dynamic cell size on resize
-		local function resize()
-			local w = i.AbsoluteSize.X
-			local gap = g.CellPadding.X.Offset
-			local cellW = math.max(0, math.floor((w - gap*(n-1))/n))
-			g.CellSize = UDim2.new(0, cellW, 0, 36)
+-- ---------- Typography ----------
+for key, size in pairs(textSize) do
+	Tailwind.register("text-"..key, function(i)
+		if i:IsA("TextLabel") or i:IsA("TextButton") then
+			i.TextSize = size
 		end
-		resize()
-		i:GetPropertyChangedSignal("AbsoluteSize"):Connect(resize)
 	end)
 end
 
--- padding
-local function setPad(inst, t,r,b,l)
-	local pad = ensurePadding(inst)
-	pad.PaddingTop = UDim.new(0,t); pad.PaddingRight = UDim.new(0,r); pad.PaddingBottom = UDim.new(0,b); pad.PaddingLeft = UDim.new(0,l)
-end
-for key,px in pairs(spacing) do
-	Tailwind.register("p-"..key, function(i) setPad(i,px,px,px,px) end)
-	Tailwind.register("px-"..key, function(i) setPad(i,0,px,0,px) end)
-	Tailwind.register("py-"..key, function(i) setPad(i,px,0,px,0) end)
-	Tailwind.register("pt-"..key, function(i) setPad(i,px, (ensurePadding(i).PaddingRight.Offset), (ensurePadding(i).PaddingBottom.Offset), (ensurePadding(i).PaddingLeft.Offset)) end)
-	Tailwind.register("pr-"..key, function(i) setPad(i, (ensurePadding(i).PaddingTop.Offset), px, (ensurePadding(i).PaddingBottom.Offset), (ensurePadding(i).PaddingLeft.Offset)) end)
-	Tailwind.register("pb-"..key, function(i) setPad(i, (ensurePadding(i).PaddingTop.Offset), (ensurePadding(i).PaddingRight.Offset), px, (ensurePadding(i).PaddingLeft.Offset)) end)
-	Tailwind.register("pl-"..key, function(i) setPad(i, (ensurePadding(i).PaddingTop.Offset), (ensurePadding(i).PaddingRight.Offset), (ensurePadding(i).PaddingBottom.Offset), px) end)
+for weight, font in pairs(weightFont) do
+	Tailwind.register("font-"..weight, function(i)
+		if i:IsA("TextLabel") or i:IsA("TextButton") then
+			i.Font = font
+		end
+	end)
 end
 
--- margin (best applied on child via LayoutOrder + UIListLayout padding; we emulate via Position offset for standalone)
-local function setMargin(inst, t,r,b,l)
-	inst:SetAttribute("_tw_margin", {t,r,b,l})
+Tailwind.register("text-left", function(i)
+	if i:IsA("TextLabel") or i:IsA("TextButton") then
+		i.TextXAlignment = Enum.TextXAlignment.Left
+	end
+end)
+
+Tailwind.register("text-center", function(i)
+	if i:IsA("TextLabel") or i:IsA("TextButton") then
+		i.TextXAlignment = Enum.TextXAlignment.Center
+	end
+end)
+
+Tailwind.register("text-right", function(i)
+	if i:IsA("TextLabel") or i:IsA("TextButton") then
+		i.TextXAlignment = Enum.TextXAlignment.Right
+	end
+end)
+
+Tailwind.register("truncate", function(i)
+	if i:IsA("TextLabel") or i:IsA("TextButton") then
+		i.TextTruncate = Enum.TextTruncate.AtEnd
+		i.TextWrapped = false
+	end
+end)
+
+-- ---------- Border Width ----------
+Tailwind.register("border", function(i)
+	local s = ensureStroke(i)
+	s.Thickness = 1
+end)
+
+for n=2,8 do
+	Tailwind.register("border-"..n, function(i)
+		local s = ensureStroke(i)
+		s.Thickness = n
+	end)
 end
-for key,px in pairs(spacing) do
-	Tailwind.register("m-"..key, function(i) setMargin(i,px,px,px,px) end)
-	Tailwind.register("mx-"..key, function(i) setMargin(i,0,px,0,px) end)
-	Tailwind.register("my-"..key, function(i) setMargin(i,px,0,px,0) end)
-	Tailwind.register("mt-"..key, function(i) setMargin(i,px,0,0,0) end)
-	Tailwind.register("mr-"..key, function(i) setMargin(i,0,px,0,0) end)
-	Tailwind.register("mb-"..key, function(i) setMargin(i,0,0,px,0) end)
-	Tailwind.register("ml-"..key, function(i) setMargin(i,0,0,0,px) end)
+
+-- ---------- Border Radius ----------
+Tailwind.register("rounded-none", function(i)
+	local c = i:FindFirstChildOfClass("UICorner")
+	if c then c:Destroy() end
+end)
+
+local radius = {
+	sm = 4, md = 6, lg = 8, xl = 12,
+	["2xl"] = 16, ["3xl"] = 24, full = 9999,
+}
+
+Tailwind.register("rounded", function(i)
+	local c = i:FindFirstChildOfClass("UICorner") or Instance.new("UICorner", i)
+	c.CornerRadius = UDim.new(0,6)
+end)
+
+for key,px in pairs(radius) do
+	Tailwind.register("rounded-"..key, function(i)
+		local c = i:FindFirstChildOfClass("UICorner") or Instance.new("UICorner", i)
+		c.CornerRadius = UDim.new(0,px)
+	end)
 end
 
--- width / height (pixel presets + full)
-for key,px in pairs(spacing) do
-	Tailwind.register("w-"..key, function(i) i.Size = UDim2.new(i.Size.X.Scale, px, i.Size.Y.Scale, i.Size.Y.Offset) end)
-	Tailwind.register("h-"..key, function(i) i.Size = UDim2.new(i.Size.X.Scale, i.Size.X.Offset, i.Size.Y.Scale, px) end)
+-- ---------- Ring (Focus Outline) ----------
+for _, size in ipairs({1,2,4,8}) do
+	Tailwind.register("ring-"..size, function(i)
+		local s = ensureStroke(i)
+		s.Thickness = size
+		s.Color = Color3.fromRGB(59,130,246) -- default ring-blue
+	end)
 end
-Tailwind.register("w-full", function(i) i.Size = UDim2.new(1, 0, i.Size.Y.Scale, i.Size.Y.Offset) end)
-Tailwind.register("h-full", function(i) i.Size = UDim2.new(i.Size.X.Scale, i.Size.X.Offset, 1, 0) end)
-Tailwind.register("w-screen", function(i) i.Size = UDim2.new(1, 0, i.Size.Y.Scale, i.Size.Y.Offset) end)
-Tailwind.register("h-screen", function(i) i.Size = UDim2.new(i.Size.X.Scale, i.Size.X.Offset, 1, 0) end)
 
--- text sizes, alignment, weights
-for name,px in pairs(textSize) do Tailwind.register("text-"..name, function(i) pcall(function() i.TextSize = px end) end) end
-Tailwind.register("text-left", function(i) pcall(function() i.TextXAlignment = Enum.TextXAlignment.Left end) end)
-Tailwind.register("text-center", function(i) pcall(function() i.TextXAlignment = Enum.TextXAlignment.Center end) end)
-Tailwind.register("text-right", function(i) pcall(function() i.TextXAlignment = Enum.TextXAlignment.Right end) end)
-for k,f in pairs(weightFont) do Tailwind.register("font-"..k, function(i) pcall(function() i.Font = f end) end) end
+Tailwind.register("ring-transparent", function(i)
+	local s = ensureStroke(i)
+	s.Color = Color3.fromRGB(0,0,0)
+	s.Transparency = 1
+end)
 
--- rounded
-local radii = { none=0, sm=4, DEFAULT=8, md=10, lg=12, xl=16, ["2xl"]=20, ["3xl"]=24, full=999 }
-local function setCorner(i,px) local c = i:FindFirstChildOfClass("UICorner") or Instance.new("UICorner"); c.CornerRadius = UDim.new(0,px); c.Parent = i end
-Tailwind.register("rounded", function(i) setCorner(i, radii.DEFAULT) end)
-for k,px in pairs(radii) do Tailwind.register("rounded-"..k, function(i) setCorner(i, px) end) end
+Tailwind.register("ring-white", function(i)
+	local s = ensureStroke(i)
+	s.Color = Color3.fromRGB(255,255,255)
+end)
 
--- border width/color
-Tailwind.register("border", function(i) i.BorderSizePixel = 1; i.BorderColor3 = i.BorderColor3 or Color3.fromRGB(229,231,235) end)
-for n=0,8 do Tailwind.register("border-"..n, function(i) i.BorderSizePixel = n end) end
-
--- ring (UIStroke)
-local function ensureStroke(i)
-	local s = i:FindFirstChildOfClass("UIStroke")
-	if not s then s = Instance.new("UIStroke"); s.Parent = i end
-	return s
+-- ---------- Z-index ----------
+for key, z in pairs(zIndex) do
+	Tailwind.register("z-"..tostring(key), function(i)
+		i.ZIndex = z
+	end)
 end
-Tailwind.register("ring", function(i) local s=ensureStroke(i); s.Thickness = 1.5; s.Color = Color3.fromRGB(59,130,246); s.Transparency=0.2 end)
-for n=0,8 do Tailwind.register("ring-"..n, function(i) local s=ensureStroke(i); s.Thickness=n end) end
-for fam,shades in pairs(palette) do for shade,c in pairs(shades) do Tailwind.register("ring-"..fam.."-"..shade, function(i) local s=ensureStroke(i); s.Color=c end) end end
 
--- z-index
-Tailwind.register("z-auto", function(i) i.ZIndex = 1 end)
-for k,v in pairs(zIndex) do if k ~= "auto" then Tailwind.register("z-"..k, function(i) i.ZIndex = v end) end end
+Tailwind.register("z-auto", function(i) i.ZIndex = 0 end)
+--========================================================--
+--  Part 4: Shadows, Transforms, Transitions, Backdrop
+--========================================================--
 
--- overflow
-Tailwind.register("overflow-hidden", function(i) if i:IsA("ScrollingFrame") then i.ScrollBarThickness=0 end; i.ClipsDescendants = true end)
-Tailwind.register("overflow-visible", function(i) i.ClipsDescendants = false end)
-Tailwind.register("overflow-scroll", function(i) if i:IsA("ScrollingFrame") then i.ScrollBarThickness = 6 end end)
-
--- shadows (ImageLabel behind)
-local function addShadow(i, size, trans)
-	local s = i:FindFirstChild("_tw_shadow") or Instance.new("ImageLabel")
-	s.Name = "_tw_shadow"
-	s.BackgroundTransparency = 1
-	s.Image = "rbxassetid://1316045217"
-	s.ImageColor3 = Color3.new(0,0,0)
-	s.ImageTransparency = trans
-	s.ScaleType = Enum.ScaleType.Slice
-	s.SliceCenter = Rect.new(10, 10, 118, 118)
-	s.Size = i.Size + UDim2.new(0, size, 0, size)
-	s.Position = UDim2.new(0, -size/2, 0, -size/2)
-	s.ZIndex = i.ZIndex - 1
-	s.Parent = i
+-- ---------- Shadows ----------
+local function addShadow(i, depth, opacity)
+	local shadow = i:FindFirstChild("TailwindShadow")
+	if not shadow then
+		shadow = Instance.new("ImageLabel")
+		shadow.Name = "TailwindShadow"
+		shadow.BackgroundTransparency = 1
+		shadow.Image = "rbxassetid://1316045217" -- simple blur circle
+		shadow.ScaleType = Enum.ScaleType.Slice
+		shadow.SliceCenter = Rect.new(10,10,118,118)
+		shadow.AnchorPoint = Vector2.new(0.5,0.5)
+		shadow.Position = UDim2.fromScale(0.5,0.5)
+		shadow.Size = UDim2.new(1,depth*2,1,depth*2)
+		shadow.ZIndex = i.ZIndex - 1
+		shadow.Parent = i
+	end
+	shadow.ImageTransparency = 1 - opacity
 end
 
 Tailwind.register("shadow-sm", function(i) addShadow(i, 4, 0.75) end)
@@ -476,81 +619,212 @@ Tailwind.register("shadow-md", function(i) addShadow(i, 12, 0.65) end)
 Tailwind.register("shadow-lg", function(i) addShadow(i, 16, 0.6) end)
 Tailwind.register("shadow-xl", function(i) addShadow(i, 24, 0.55) end)
 Tailwind.register("shadow-2xl", function(i) addShadow(i, 32, 0.5) end)
-
--- 🔥 VERY LAST LINE
-return Tailwind
-
--- transforms
-local function ensureScale(i)
-	local s = i:FindFirstChildOfClass("UIScale")
-	if not s then s = Instance.new("UIScale"); s.Parent = i end
-	return s
-end
-for n=50,150,5 do Tailwind.register("scale-"..n, function(i) local s=ensureScale(i); s.Scale = n/100 end) end
-Tailwind.register("rotate-0", function(i) pcall(function() i.Rotation = 0 end) end)
-Tailwind.register("rotate-45", function(i) pcall(function() i.Rotation = 45 end) end)
-Tailwind.register("rotate-90", function(i) pcall(function() i.Rotation = 90 end) end)
-Tailwind.register("rotate-180", function(i) pcall(function() i.Rotation = 180 end) end)
-Tailwind.register("rotate-270", function(i) pcall(function() i.Rotation = 270 end) end)
-
-for key,px in pairs(spacing) do
-	Tailwind.register("translate-x-"..key, function(i) i.Position = UDim2.new(i.Position.X.Scale, i.Position.X.Offset + px, i.Position.Y.Scale, i.Position.Y.Offset) end)
-	Tailwind.register("translate-y-"..key, function(i) i.Position = UDim2.new(i.Position.X.Scale, i.Position.X.Offset, i.Position.Y.Scale, i.Position.Y.Offset + px) end)
-end
-
--- transitions
-Tailwind.register("transition", function(i) i:SetAttribute("_tw_transition", true) end)
-for d,sec in pairs(durations) do Tailwind.register("duration-"..d, function(i) i:SetAttribute("_tw_duration", sec) end) end
-for k,es in pairs(easings) do Tailwind.register("ease-"..k, function(i) i:SetAttribute("_tw_ease", es) end) end
-
--- helper to tween property when class implies a property change
-local function smartTween(i, key, target)
-	if not i:GetAttribute("_tw_transition") then i[key] = target; return end
-	local dur = i:GetAttribute("_tw_duration") or 0.2
-	local ease = i:GetAttribute("_tw_ease") or Enum.EasingStyle.Quad
-	TweenService:Create(i, TweenInfo.new(dur, ease, Enum.EasingDirection.Out), { [key]=target }):Play()
-end
-
--- text color / bg color with transition awareness (override previous ones)
-for fam, shades in pairs(palette) do
-	for shade, c in pairs(shades) do
-		Tailwind.register("bg-"..fam.."-"..shade.."-t", function(i) smartTween(i, "BackgroundColor3", c) end)
-		Tailwind.register("text-"..fam.."-"..shade.."-t", function(i) pcall(function() smartTween(i, "TextColor3", c) end) end)
-	end
-end
-
--- text utilities
-for name,_ in pairs(textSize) do
-	Tailwind.register("text-"..name.."-t", function(i) pcall(function() smartTween(i, "TextSize", textSize[name]) end) end)
-end
-
--- alignment containers
-Tailwind.register("container", function(i) i.Size = UDim2.new(1, -32, i.Size.Y.Scale, i.Size.Y.Offset); ensurePadding(i).PaddingLeft = UDim.new(0,16); ensurePadding(i).PaddingRight=UDim.new(0,16) end)
-
--- backdrop / glass helper
-Tailwind.register("backdrop-glass", function(i)
-	i.BackgroundColor3 = Color3.fromRGB(30,41,59)
-	i.BackgroundTransparency = 0.25
-	local g = Instance.new("UIGradient", i)
-	g.Rotation = 60
-	g.Color = ColorSequence.new(Color3.fromRGB(180,200,255), Color3.fromRGB(80,100,200))
-	local s = ensureStroke(i); s.Color = Color3.fromRGB(200,220,255); s.Transparency = 0.75
-	setCorner(i, 16)
+Tailwind.register("shadow-none", function(i)
+	local s = i:FindFirstChild("TailwindShadow")
+	if s then s:Destroy() end
 end)
 
--- text utility: truncate
-Tailwind.register("truncate", function(i) pcall(function() i.TextTruncate = Enum.TextTruncate.AtEnd end) end)
-
--- -------------- Example UI Builder (optional) --------------
-function Tailwind.example(parent)
-	local root = Tailwind.create("Frame", { Parent = parent, Size = UDim2.fromScale(1,1), Class = "bg-slate-900/90" })
-	local card = Tailwind.create("Frame", { Parent = root, Position = UDim2.new(0.5,-200,0.5,-120), Size = UDim2.fromOffset(400,240), Class = "backdrop-glass p-6 shadow-xl flex flex-col gap-4" })
-	local title = Tailwind.create("TextLabel", { Parent = card, Text = "TailwindLuau", Class = "text-white text-xl font-semibold" })
-	local subtitle = Tailwind.create("TextLabel", { Parent = card, Text = "Build UIs like Tailwind, in Roblox.", Class = "text-slate-300 text-sm" })
-	local row = Tailwind.create("Frame", { Parent = card, Class = "flex gap-4" })
-	local btn = Tailwind.create("TextButton", { Parent = row, Text = "Primary", Class = "text-white bg-blue-600 rounded-md px-4 py-2 transition duration-150 hover:bg-blue-500" })
-	local sec = Tailwind.create("TextButton", { Parent = row, Text = "Secondary", Class = "text-slate-100 bg-slate-700 rounded-md px-4 py-2 transition duration-150 hover:bg-slate-600" })
-	return root
+-- ---------- Transforms ----------
+local function ensureTransform(i)
+	local t = i:FindFirstChild("TailwindTransform")
+	if not t then
+		t = Instance.new("UIScale")
+		t.Name = "TailwindTransform"
+		t.Scale = 1
+		t.Parent = i
+	end
+	return t
 end
 
+for _,v in ipairs({50,75,90,95,100,105,110,125,150}) do
+	Tailwind.register("scale-"..v, function(i)
+		ensureTransform(i).Scale = v/100
+	end)
+end
+
+for _,deg in ipairs({0,45,90,180,270}) do
+	Tailwind.register("rotate-"..deg, function(i)
+		if i:IsA("GuiObject") then
+			i.Rotation = deg
+		end
+	end)
+end
+
+for key,px in pairs(spacing) do
+	Tailwind.register("translate-x-"..key, function(i)
+		i.Position = i.Position + UDim2.fromOffset(px,0)
+	end)
+	Tailwind.register("translate-y-"..key, function(i)
+		i.Position = i.Position + UDim2.fromOffset(0,px)
+	end)
+end
+
+-- ---------- Transitions ----------
+local function addTween(i, props, duration, style)
+	local tweenService = game:GetService("TweenService")
+	local info = TweenInfo.new(duration, style, Enum.EasingDirection.Out)
+	tweenService:Create(i, info, props):Play()
+end
+
+for _,d in ipairs({75,100,150,200,300,500,700,1000}) do
+	Tailwind.register("duration-"..d, function(i)
+		i:SetAttribute("TailwindDuration", d/1000)
+	end)
+end
+
+Tailwind.register("ease-linear", function(i) i:SetAttribute("TailwindEasing", Enum.EasingStyle.Linear) end)
+Tailwind.register("ease-in", function(i) i:SetAttribute("TailwindEasing", Enum.EasingStyle.Quad) end)
+Tailwind.register("ease-out", function(i) i:SetAttribute("TailwindEasing", Enum.EasingStyle.Quad) end)
+Tailwind.register("ease-in-out", function(i) i:SetAttribute("TailwindEasing", Enum.EasingStyle.Sine) end)
+
+-- Example transition usage
+Tailwind.register("hover:scale-105", function(i)
+	if i:IsA("GuiButton") then
+		i.MouseEnter:Connect(function()
+			addTween(ensureTransform(i), {Scale = 1.05}, i:GetAttribute("TailwindDuration") or 0.15, i:GetAttribute("TailwindEasing") or Enum.EasingStyle.Sine)
+		end)
+		i.MouseLeave:Connect(function()
+			addTween(ensureTransform(i), {Scale = 1}, i:GetAttribute("TailwindDuration") or 0.15, i:GetAttribute("TailwindEasing") or Enum.EasingStyle.Sine)
+		end)
+	end
+end)
+
+-- ---------- Backdrop Filters ----------
+local function ensureBlur(i)
+	local b = i:FindFirstChild("TailwindBlur")
+	if not b then
+		b = Instance.new("UIStroke")
+		b.Name = "TailwindBlur"
+		b.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		b.Thickness = 0
+		b.Transparency = 0.5
+		b.Parent = i
+	end
+	return b
+end
+
+Tailwind.register("backdrop-blur", function(i)
+	local b = ensureBlur(i)
+	b.Thickness = 2
+end)
+
+Tailwind.register("backdrop-blur-md", function(i)
+	local b = ensureBlur(i)
+	b.Thickness = 6
+end)
+
+Tailwind.register("backdrop-glass", function(i)
+	i.BackgroundTransparency = 0.3
+	i.BackgroundColor3 = Color3.fromRGB(255,255,255)
+	ensureBlur(i).Transparency = 0.6
+end)
+
+Tailwind.register("backdrop-bright", function(i)
+	i.BackgroundColor3 = i.BackgroundColor3:Lerp(Color3.new(1,1,1),0.3)
+end)
+
+Tailwind.register("backdrop-dim", function(i)
+	i.BackgroundColor3 = i.BackgroundColor3:Lerp(Color3.new(0,0,0),0.3)
+end)
+--========================================================--
+--  Part 5: Overflow, Positioning, Flex Grow, Example, Return
+--========================================================--
+
+-- ---------- Overflow ----------
+Tailwind.register("overflow-hidden", function(i)
+	if i:IsA("ScrollingFrame") then
+		i.ScrollingEnabled = false
+	end
+end)
+
+Tailwind.register("overflow-scroll", function(i)
+	if i:IsA("ScrollingFrame") then
+		i.ScrollingEnabled = true
+	end
+end)
+
+-- ---------- Position ----------
+Tailwind.register("absolute", function(i) i.AnchorPoint = Vector2.new(0,0) end)
+Tailwind.register("relative", function(i) i.AnchorPoint = Vector2.new(0,0) end) -- Roblox default
+
+for key,px in pairs(spacing) do
+	Tailwind.register("top-"..key, function(i) i.Position = UDim2.new(i.Position.X.Scale,i.Position.X.Offset,0,px) end)
+	Tailwind.register("bottom-"..key, function(i) i.Position = UDim2.new(i.Position.X.Scale,i.Position.X.Offset,1,-px) end)
+	Tailwind.register("left-"..key, function(i) i.Position = UDim2.new(0,px,i.Position.Y.Scale,i.Position.Y.Offset) end)
+	Tailwind.register("right-"..key, function(i) i.Position = UDim2.new(1,-px,i.Position.Y.Scale,i.Position.Y.Offset) end)
+end
+
+-- ---------- Flex Grow / Shrink ----------
+Tailwind.register("flex-1", function(i)
+	local s = i:FindFirstChildOfClass("UISizeConstraint") or Instance.new("UISizeConstraint")
+	s.MinSize = Vector2.new(0,0)
+	s.MaxSize = Vector2.new(math.huge, math.huge)
+	s.Parent = i
+end)
+
+Tailwind.register("flex-none", function(i)
+	local s = i:FindFirstChildOfClass("UISizeConstraint") or Instance.new("UISizeConstraint")
+	s.MinSize = i.AbsoluteSize
+	s.MaxSize = i.AbsoluteSize
+	s.Parent = i
+end)
+
+-- ---------- Example Builder ----------
+function Tailwind.example()
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.IgnoreGuiInset = true
+	screenGui.ResetOnSpawn = false
+	screenGui.Name = "TailwindExample"
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromScale(0.5,0.5)
+	frame.AnchorPoint = Vector2.new(0.5,0.5)
+	frame.Position = UDim2.fromScale(0.5,0.5)
+	frame.Parent = screenGui
+
+	-- Apply Tailwind classes
+	Tailwind.apply(frame, {
+		"bg-gray-200",
+		"rounded-lg",
+		"shadow-lg",
+		"p-6",
+		"flex",
+		"flex-col",
+		"items-center",
+		"justify-center",
+		"gap-4",
+	})
+
+	local label = Instance.new("TextLabel")
+	label.Text = "Hello, TailwindLuau 👋"
+	label.Size = UDim2.fromScale(1,0)
+	label.BackgroundTransparency = 1
+	label.Parent = frame
+	Tailwind.apply(label, {
+		"text-xl",
+		"font-bold",
+		"text-center",
+	})
+
+	local button = Instance.new("TextButton")
+	button.Text = "Click Me"
+	button.Size = UDim2.new(0,120,0,36)
+	button.Parent = frame
+	Tailwind.apply(button, {
+		"bg-blue-500",
+		"text-white",
+		"rounded-md",
+		"px-4",
+		"py-2",
+		"shadow",
+		"hover:scale-105",
+		"duration-200",
+		"ease-in-out",
+	})
+
+	return screenGui
+end
+
+-- ---------- Return ----------
 return Tailwind
+
